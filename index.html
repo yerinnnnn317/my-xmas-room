@@ -7,7 +7,7 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #2d2636;
     font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
-  #hint { position: fixed; top: 0; left: 0; right: 0; padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 0;
+  #hint { white-space: pre-line; position: fixed; top: 0; left: 0; right: 0; padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 0;
     color: #fff; opacity: .8; font-size: 14px; line-height: 1.5; pointer-events: none; }
   #toast { position: fixed; left: 50%; top: 76px; transform: translateX(-50%); max-width: 86%; padding: 10px 16px;
     border-radius: 14px; background: rgba(45,38,54,.94); color: #fff; font-size: 14px; line-height: 1.5;
@@ -83,6 +83,8 @@
   #sheet .post .pfoot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 12px; opacity: .85; }
   #sheet .post .pfoot button { padding: 2px 8px; font-size: 12px; }
   #sheet input[type=range] { width: 100%; }
+  #sheet .rooms { display: flex; flex-direction: column; gap: 6px; max-height: 38vh; overflow-y: auto; margin: 6px 0; }
+  #sheet .roomrow { text-align: left; border-radius: 12px; padding: 10px 12px; }
   #intro { position: fixed; left: 50%; bottom: calc(92px + env(safe-area-inset-bottom, 0px)); z-index: 9; width: max-content;
     max-width: min(92vw, 400px); box-sizing: border-box; padding: 14px 16px; border-radius: 16px; text-align: center;
     background: rgba(22,28,36,.9); color: #f3f6fa; border: 1px solid rgba(255,255,255,.14); backdrop-filter: blur(8px);
@@ -101,10 +103,13 @@
   #sheet h2 { margin: 0 32px 2px 0; font-size: 19px; }
   #sheet .sub { margin: 0 0 12px; font-size: 13px; opacity: .7; }
   #sheet label, #sheet .lab { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
-  #sheet select, #sheet input[type=text], #sheet textarea { font: inherit; font-size: 15px; color: #4a3b30; background: #fff;
+  #sheet select, #sheet input[type=text], #sheet input[type=email], #sheet input[type=password], #sheet textarea { font: inherit; font-size: 15px; color: #4a3b30; background: #fff;
     border: 1px solid #dcc9b6; border-radius: 10px; padding: 8px 10px; box-sizing: border-box; }
   #sheet textarea { width: 100%; min-height: 110px; resize: vertical; }
-  #sheet input[type=text] { width: 100%; }
+  #sheet input[type=text], #sheet input[type=email], #sheet input[type=password] { width: 100%; margin-top: 6px; }
+  #sheet .msg { min-height: 20px; margin-top: 8px; font-size: 13px; color: #b04a4a; white-space: pre-line; }
+  #sheet .or { text-align: center; font-size: 12px; opacity: .6; margin: 12px 0 2px; }
+  #sheet .tips { white-space: pre-line; font-size: 14px; line-height: 1.7; margin: 8px 0; }
   #sheet .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   #sheet .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
   #sheet button { color: #4a3b30; background: #f3e3d0; border: 1px solid #dcc9b6; backdrop-filter: none; }
@@ -157,6 +162,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
+// ── 서버 설정 (Supabase) ──  비워 두면 서버 없이 이 브라우저에만 저장하는 혼자용으로 동작해요
+const SUPABASE_URL = 'https://aqqxqluqogwxbbdbtdbv.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_sK5sweglcc8IVdq7f4IdEg_Php6uMwj';
 const SAVE_KEY = 'xmas-room-v1';
 const FEEDBACK_KEY = 'xmas-room-feedback-v1';
 const FONT = "'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif";
@@ -164,6 +172,10 @@ const MAX_LIGHTS = 7;
 const MAX_ORN = 40;
 const IMG_RE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/;
 let loading = true;
+let visit = false;                      // true: 남의 방을 구경하는 중 (고칠 수 없어요)
+let sb = null;                          // 서버 연결 (설정이 없으면 null)
+let me = null;                          // 로그인한 사람
+const ctx = { id: null, mine: true, name: '' };   // 지금 보고 있는 방
 
 // ── 기본 세팅 ──
 const scene = new THREE.Scene();
@@ -367,7 +379,7 @@ function loadFeedback() {
   } catch (e) { return []; }
 }
 let feedback = loadFeedback();
-function saveFeedback() { try { localStorage.setItem(FEEDBACK_KEY, JSON.stringify(feedback)); } catch (e) { /* 저장 불가 */ } }
+function saveFeedback() { if (sb && ctx.id) return; try { localStorage.setItem(FEEDBACK_KEY, JSON.stringify(feedback)); } catch (e) { /* 저장 불가 */ } }
 
 const boardCanvas = document.createElement('canvas');
 boardCanvas.width = 1024; boardCanvas.height = 640;
@@ -1227,6 +1239,7 @@ const delBtn = document.getElementById('del');
 
 // ── 저장 (이 브라우저에 자동으로 저장돼요) ──
 let saveTimer = null;
+let uploadTimer = null;
 function serialize() {
   const idx = new Map(items.map((it, i) => [it, i]));
   return {
@@ -1249,6 +1262,7 @@ function save() {
   if (loading || visit) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    if (sb) { scheduleUpload(); return; }
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(serialize())); } catch (e) { toast('저장 공간이 가득 차서 저장하지 못했어요. 사진을 줄여 보세요.'); }
   }, 250);
 }
@@ -1257,6 +1271,7 @@ function save() {
 function flushSave() {
   if (loading || visit) return;
   clearTimeout(saveTimer);
+  if (sb) { uploadRoom(); return; }
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(serialize())); } catch (e) { /* 저장 불가 */ }
 }
 addEventListener('pagehide', flushSave);
@@ -1694,7 +1709,7 @@ function openDiary(orn) {
   openModal((s) => {
     const page = el('div', { className: 'diary' });
     page.append(el('div', { className: 'date', textContent: new Date().getFullYear() + '년 ' + dateText(rec) }));
-    if (validImg(rec.img)) {
+    if (validImg(rec.img, !sb)) {
       const ph = el('img', { className: 'photo', src: rec.img, alt: '기록에 넣은 사진' });
       ph.referrerPolicy = 'no-referrer';
       ph.addEventListener('error', () => { ph.style.display = 'none'; });
@@ -1747,7 +1762,7 @@ function openOrnament(orn, isNew) {
     const ta = el('textarea', { id: 'ftext', maxLength: 500, placeholder: '누구와, 어디서, 어떤 기분이었는지 적어 보세요.', value: rec.text });
     s.append(ta);
     s.append(el('div', { className: 'lab', textContent: '사진 (선택)' }));
-    const picker = makePhotoPicker(rec.img, true);
+    const picker = makePhotoPicker(rec.img, !sb);
     s.append(picker.node);
     const err = el('div', { className: 'err' });
     err.setAttribute('aria-live', 'polite');
@@ -1844,6 +1859,7 @@ const NOTE_KEY = 'xmas-room-notes-v1';
 let notes = [];
 try { const a = JSON.parse(localStorage.getItem(NOTE_KEY) || '[]'); if (Array.isArray(a)) notes = a.filter((n) => n && typeof n.text === 'string').slice(-60); } catch (e) { /* 새로 시작 */ }
 function saveNotes() {
+  if (sb && ctx.id) return true;
   try { localStorage.setItem(NOTE_KEY, JSON.stringify(notes)); return true; } catch (e) { toast('저장 공간이 가득 차서 노트를 저장하지 못했어요.'); return false; }
 }
 function openNoteRead(start) {
@@ -1872,7 +1888,7 @@ function openNoteRead(start) {
       if (validImg(n.img, false)) leaf.append(el('img', { src: n.img, alt: '낙서' }));
       if (n.text) leaf.append(el('div', { className: 'body', textContent: n.text }));
       const del = el('button', { type: 'button', textContent: '지우기' });
-      armButton(del, '한 번 더 누르면 지워져요', () => { notes.splice(i, 1); saveNotes(); openNoteRead(Math.min(i, notes.length - 1)); });
+      armButton(del, '한 번 더 누르면 지워져요', () => { notes.splice(i, 1); saveNotes(); deleteRemote('notes', n); openNoteRead(Math.min(i, notes.length - 1)); });
       leaf.append(el('div', { className: 'foot' }, [el('span', { textContent: '- ' + (n.name || '익명') + ' · ' + (d.getMonth() + 1) + '.' + d.getDate() }), ...(visit ? [] : [del])]));
       no.textContent = (i + 1) + ' / ' + notes.length;
       prevB.disabled = i === 0;
@@ -1968,9 +1984,11 @@ function openNoteWrite() {
     ok.addEventListener('click', () => {
       const text = ta.value.trim();
       if (!text && !dirty) { msg.style.color = ''; msg.textContent = '글이나 낙서 중 하나는 남겨 주세요.'; return; }
-      notes.push({ ts: Date.now(), name: nameIn.value.trim().slice(0, 20), text, img: dirty ? cv.toDataURL('image/jpeg', 0.7) : null });
+      const entry = { ts: Date.now(), name: nameIn.value.trim().slice(0, 20), text, img: dirty ? cv.toDataURL('image/jpeg', 0.7) : null };
+      notes.push(entry);
       if (notes.length > 60) notes.shift();
       if (!saveNotes()) return;
+      postRemote('notes', entry);
       ta.value = ''; wipe(); dirty = false;
       msg.style.color = '#4a8f58';
       msg.textContent = '노트에 한 페이지를 남겼어요! “노트 구경하기”에서 볼 수 있어요.';
@@ -2119,6 +2137,7 @@ function openFeedbackRead() {
       armButton(del, '한 번 더 누르면 지워져요', () => {
         feedback.splice(feedback.indexOf(p), 1);
         saveFeedback();
+        deleteRemote('feedback', p);
         drawBoard();
         openFeedbackRead();
       });
@@ -2175,8 +2194,10 @@ function openFeedbackWrite() {
       const name = nameIn.value.trim();
       if (!text) { msg.style.color = ''; msg.textContent = '피드백을 적어 주세요.'; ta.focus(); return; }
       if (rN.checked && !name) { msg.style.color = ''; msg.textContent = '실명을 고르셨다면 이름을 적어 주세요.'; nameIn.focus(); return; }
-      feedback.push({ id: Date.now(), name: rA.checked ? '' : name, anon: rA.checked, text, color: POSTIT[feedback.length % POSTIT.length], ts: Date.now() });
+      const entry = { id: Date.now(), name: rA.checked ? '' : name, anon: rA.checked, text, color: POSTIT[feedback.length % POSTIT.length], ts: Date.now() };
+      feedback.push(entry);
       saveFeedback();
+      postRemote('feedback', entry);
       drawBoard();
       ta.value = '';
       msg.style.color = '#4a7a5c';
@@ -2482,17 +2503,23 @@ function placeItem(def, x, y, z, ry, size, variant) {
   return g;
 }
 function setupDefaults() {
-  placeItem(defOf('tree'), -3.2, 0, -3.2);
-  placeItem(defOf('fire'), -0.8, 0, -4.35);
-  placeItem(defOf('shelf'), -4.55, 0, -0.6, Math.PI / 2);
+  placeItem(defOf('tree'), -3.2, 0, -3.2);   // 처음 방에는 트리(와 필수 게시판)만 있어요. 창문·커튼은 방에 기본으로 있어요
 }
 function ensureBoard() {
   if (items.some((i) => i.userData.isBoard)) return;
   placeItem(defOf('board'), -4.9, 2.3, 1.6, Math.PI / 2);
 }
 function restore(data) {
-  wallMat.color.setHex(data.wall);
-  floorMat.color.setHex(data.floor);
+  const fin = (v, d) => (Number.isFinite(v) ? v : d);
+  data = Object.assign({}, data, {
+    items: (Array.isArray(data.items) ? data.items : []).slice(0, 200).map((d) => (d && typeof d === 'object'
+      ? { ...d, x: fin(d.x, 0), y: fin(d.y, 0), z: fin(d.z, 0), r: fin(d.r, 0), s: Number.isFinite(d.s) ? Math.min(4, Math.max(0.3, d.s)) : undefined, v: Number.isInteger(d.v) ? d.v : undefined }
+      : {})),
+    orns: (Array.isArray(data.orns) ? data.orns : []).slice(0, 120),
+    books: (Array.isArray(data.books) ? data.books : []).slice(0, 200),
+  });
+  if (Number.isInteger(data.wall)) wallMat.color.setHex(data.wall & 0xffffff);
+  if (Number.isInteger(data.floor)) floorMat.color.setHex(data.floor & 0xffffff);
   setRoomLight(!!data.roomOn);
   setCurtain(data.curtain !== 0);
   curtain.t = curtain.target;
@@ -2525,66 +2552,8 @@ function restore(data) {
     addBook(sh, b.t.slice(0, 60), String(b.p || '').slice(0, 40), col, Number.isInteger(b.i) ? b.i : undefined);
   });
   if (!data.bk && !items.some((it) => it.userData.kind === 'shelf')) placeItem(defOf('shelf'), -4.55, 0, -0.6, Math.PI / 2);
-  (data.orns || []).forEach((o) => { if (made[o.tree] && o.rec) addOrnament(made[o.tree], o.shape, o.col, o.slot, o.rec); });
+  (data.orns || []).forEach((o) => { if (o && Number.isInteger(o.slot) && o.slot >= 0 && o.slot < 400 && made[o.tree] && o.rec) addOrnament(made[o.tree], o.shape, o.col, o.slot, o.rec); });
 }
-// ── 방 주인이 올려 둔 room.json 이 있고, 내 저장본이 없으면 "구경 모드"로 열어요 ──
-const qs = new URLSearchParams(location.search);
-let rawSave = null;
-try { rawSave = localStorage.getItem(SAVE_KEY); } catch (e) { /* 무시 */ }
-let shared = null;
-if (!rawSave && !qs.has('own')) {
-  try {
-    const r = await fetch('room.json', { cache: 'no-store' });
-    if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.items)) shared = j; }
-  } catch (e) { /* 파일이 없으면 평소처럼 */ }
-}
-const visit = !!shared && !qs.has('edit');
-function mergeShared(list, mine, ok) {
-  const key = (n) => n.ts + '|' + n.text;
-  const seen = new Set(mine.map(key));
-  return (Array.isArray(list) ? list.filter((n) => n && ok(n)) : []).filter((n) => !seen.has(key(n))).concat(mine).sort((x, y) => x.ts - y.ts);
-}
-try {
-  if (rawSave) restore(JSON.parse(rawSave));
-  else if (shared) {
-    restore(shared);
-    const hex = (c) => (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c) ? c : POSTIT[0]);
-    const fb = mergeShared(shared.feedback, feedback, (p) => typeof p.text === 'string' && Number.isFinite(p.ts)).slice(-100);
-    feedback.splice(0, feedback.length, ...fb.map((p) => ({ id: p.id, name: String(p.name || '').slice(0, 20), anon: !!p.anon, text: p.text.slice(0, 200), color: hex(p.color), ts: p.ts })));
-    notes = mergeShared(shared.notes, notes, (n) => typeof n.text === 'string' && Number.isFinite(n.ts)).slice(-60).map((n) => ({ ts: n.ts, name: String(n.name || '').slice(0, 20), text: n.text.slice(0, 500), img: validImg(n.img, false) ? n.img : null }));
-    drawBoard();
-  } else setupDefaults();
-} catch (e) {
-  try { const raw = localStorage.getItem(SAVE_KEY); if (raw) localStorage.setItem(SAVE_KEY + '-backup', raw); } catch (e2) { /* 무시 */ }
-  items.splice(0).forEach((it) => scene.remove(it));
-  ornaments.length = 0;
-  setupDefaults();
-}
-ensureBoard();
-loading = false;
-if (!rawSave && !visit) save();   // 처음 시작한 방은 바로 저장해 둬요
-function exportRoom() {   // 지금 방을 room.json 파일로 내려받아요 (배포할 때 index.html 옆에 올려요)
-  const data = Object.assign(serialize(), { feedback, notes });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  a.download = 'room.json';
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
-  toast('room.json 파일을 만들었어요! index.html 옆에 같이 올리면, 링크로 온 사람들이 이 방을 구경할 수 있어요.');
-}
-if (visit) {
-  itemsBtn.style.display = 'none';
-  colorBtn.style.display = 'none';
-  document.getElementById('hint').innerHTML = '🎁 친구의 크리스마스 방을 구경하고 있어요! 트리의 오너먼트, 책꽂이의 책, 책상 위 노트, 게시판을 눌러 보세요.<br>빈 곳을 끌면 방이 돌아가요. 왼쪽 아래 버튼으로 시점을 옮길 수 있어요.';
-  const own = mkBtn('✨ 나도 내 방 만들기', () => { location.href = location.pathname + '?own=1'; }, catalogEl);
-  own.title = '구경을 마치고 나만의 방을 새로 꾸며요';
-} else {
-  const exp = mkBtn('📤 방 공유 파일 만들기', exportRoom, catalogEl);
-  exp.title = '지금 꾸민 방을 파일로 만들어요. 배포할 때 같이 올리면 링크로 온 사람들이 이 방을 볼 수 있어요';
-}
-if (!storageOk) document.getElementById('hint').append(document.createElement('br'), '⚠️ 이 화면에서는 저장이 되지 않아요. 크롬 같은 브라우저에서 열어야 방이 유지돼요.');
 
 // ── 벽 뒤에서 볼 때는 그 벽과 벽에 걸린 것들이 사라져요 ──
 function updateWallVisibility() {
@@ -2778,6 +2747,350 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
+
+// ── 서버(Supabase): 방 저장, 다른 사람 방 구경, 노트·피드백 ──
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+const hexColor = (c) => (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c) ? c : POSTIT[0]);
+const myRoomName = () => String((me && me.user_metadata && me.user_metadata.full_name) || '').trim().slice(0, 20);
+
+async function initBackend() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return;
+  try {
+    const mod = await withTimeout(import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm'), 9000);
+    sb = mod.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const { data } = await withTimeout(sb.auth.getSession(), 9000);
+    me = data && data.session ? data.session.user : null;
+  } catch (e) {
+    sb = null; me = null;
+    toast('서버에 연결하지 못했어요. 이 브라우저에만 저장돼요.');
+  }
+}
+function clearRoom() {
+  select(null);
+  hideIntro();
+  camSaved = null;
+  fly = null;
+  items.slice().forEach((it) => { if (it.parent) it.parent.remove(it); });
+  items.length = 0;
+  ornaments.length = 0;
+}
+function applyRoom(data, o) {
+  loading = true;
+  if (inside) exitInside();
+  clearRoom();
+  try { restore(data); } catch (e) { clearRoom(); setupDefaults(); }
+  ensureBoard();
+  ctx.id = o.id; ctx.name = o.name || ''; ctx.mine = !!o.mine;
+  visit = !o.mine;
+  camera.position.copy(HOME_POS);
+  controls.target.copy(HOME_TARGET);
+  loading = false;
+  refreshUI();
+}
+async function loadComments(id) {
+  const [f, n] = await Promise.all([
+    sb.from('feedback').select('id,name,anon,body,color,created_at').eq('room', id).order('created_at', { ascending: false }).limit(100),
+    sb.from('notes').select('id,name,body,img,created_at').eq('room', id).order('created_at', { ascending: false }).limit(60),
+  ]);
+  feedback.splice(0, feedback.length, ...(f.data || []).reverse().map((r) => ({ id: r.id, name: String(r.name || '').slice(0, 20), anon: !!r.anon, text: String(r.body || ''), color: hexColor(r.color), ts: Date.parse(r.created_at) || Date.now() })));
+  notes = (n.data || []).reverse().map((r) => ({ id: r.id, ts: Date.parse(r.created_at) || Date.now(), name: String(r.name || '').slice(0, 20), text: String(r.body || ''), img: validImg(r.img, false) ? r.img : null }));
+  drawBoard();
+}
+async function enterRoom(id) {
+  const { data: row, error } = await sb.from('rooms').select('owner,name,data').eq('owner', id).maybeSingle();
+  if (error || !row || !row.data || !Array.isArray(row.data.items)) return false;
+  applyRoom(row.data, { id, name: row.name, mine: !!me && me.id === id });
+  await loadComments(id);
+  try { history.replaceState(null, '', location.pathname + (visit ? '?room=' + id : '')); } catch (e) { /* 무시 */ }
+  return true;
+}
+async function enterOwnRoom() {
+  if (await enterRoom(me.id)) return;
+  // 처음 로그인: 이 브라우저에 꾸며 둔 방이 있으면 그 방을 내 방으로 올려요
+  let data = null;
+  try { const raw = localStorage.getItem(SAVE_KEY); if (raw) data = JSON.parse(raw); } catch (e) { /* 무시 */ }
+  const name = (myRoomName() || '내') + (myRoomName() ? '의 방' : ' 방');
+  if (data && Array.isArray(data.items)) applyRoom(data, { id: me.id, name, mine: true });
+  else {
+    loading = true; clearRoom(); setupDefaults(); ensureBoard();
+    ctx.id = me.id; ctx.name = name; ctx.mine = true; visit = false;
+    loading = false; refreshUI();
+  }
+  feedback.splice(0, feedback.length); notes = []; drawBoard();
+  await uploadRoom();
+  showWelcome();
+}
+async function enterFeatured() {
+  const { data: f } = await sb.from('featured').select('owner').limit(1).maybeSingle();
+  if (f && await enterRoom(f.owner)) return;
+  loading = true; clearRoom(); setupDefaults(); ensureBoard();
+  ctx.id = null; ctx.name = ''; ctx.mine = false; visit = true;
+  loading = false; refreshUI();
+  toast('아직 대표 방이 없어요. ✨ 내 방 만들기로 시작해 보세요!');
+}
+function bootOffline() {
+  loading = true; clearRoom();
+  let raw = null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { /* 무시 */ }
+  try { if (raw) restore(JSON.parse(raw)); else setupDefaults(); } catch (e) {
+    try { if (raw) localStorage.setItem(SAVE_KEY + '-backup', raw); } catch (e2) { /* 무시 */ }
+    clearRoom(); setupDefaults();
+  }
+  ensureBoard();
+  ctx.id = null; ctx.mine = true; visit = false;
+  loading = false;
+  if (!raw) save();
+  refreshUI();
+}
+function scheduleUpload() { clearTimeout(uploadTimer); uploadTimer = setTimeout(uploadRoom, 1200); }
+async function uploadRoom() {
+  if (!sb || !me || visit || !ctx.mine) return;
+  const data = serialize();
+  if (JSON.stringify(data).length > 5000000) { toast('방 데이터가 너무 커서 서버에 저장하지 못했어요. 사진을 줄여 주세요.'); return; }
+  const { error } = await sb.from('rooms').upsert({ owner: me.id, name: ctx.name, data, updated_at: new Date().toISOString() });
+  if (error) toast('방을 서버에 저장하지 못했어요. 인터넷 연결을 확인해 주세요.');
+}
+async function postRemote(kind, e) {
+  if (!sb || !ctx.id) return;
+  const row = kind === 'feedback'
+    ? { room: ctx.id, name: e.name, anon: e.anon, body: e.text, color: e.color }
+    : { room: ctx.id, name: e.name, body: e.text, img: e.img };
+  const { data, error } = await sb.from(kind).insert(row).select('id').single();
+  if (error) {
+    toast('글을 서버에 남기지 못했어요. 잠시 뒤에 다시 해 주세요.');
+    const arr = kind === 'feedback' ? feedback : notes;
+    const i = arr.indexOf(e);
+    if (i >= 0) arr.splice(i, 1);
+    if (kind === 'feedback') drawBoard();
+  } else e.id = data.id;
+}
+function deleteRemote(kind, e) {
+  if (!sb || !ctx.id || e.id == null) return;
+  sb.from(kind).delete().eq('id', e.id).then(({ error }) => { if (error) toast('서버에서 지우지 못했어요.'); });
+}
+async function signIn() {
+  if (!sb) return;
+  const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
+  if (error) toast('로그인을 시작하지 못했어요.');
+}
+
+// ── 화면 버튼들 ──
+const roomsBtn = mkBtn('🔎 방 구경하기', () => openRooms(), catalogEl);
+const loginBtn = mkBtn('✨ 로그인 / 내 방 만들기', () => openLanding(), catalogEl);
+const myRoomBtn = mkBtn('🏠 내 방으로', async () => { if (!(await enterRoom(me.id))) toast('내 방을 불러오지 못했어요.'); }, catalogEl);
+const linkBtn = mkBtn('🔗 내 방 링크', () => openLink(), catalogEl);
+const exportBtn = mkBtn('📤 방 백업 파일', exportRoom, catalogEl);
+const importBtn = mkBtn('📥 방 파일 불러오기', () => importFile.click(), catalogEl);
+roomsBtn.title = '다른 사람들의 방을 구경해요';
+linkBtn.title = '내 방을 친구에게 보여줄 링크를 복사해요';
+exportBtn.title = '지금 방을 파일(room.json)로 저장해 둬요';
+importBtn.title = '저장해 둔 방 파일을 내 방으로 불러와요 (옛날에 꾸민 방을 옮길 때 써요)';
+const importFile = el('input', { type: 'file', accept: '.json,application/json' });
+importFile.style.display = 'none';
+document.body.append(importFile);
+importFile.addEventListener('change', async () => {
+  const f = importFile.files && importFile.files[0];
+  importFile.value = '';
+  if (!f || !me || visit) return;
+  try {
+    if (f.size > 6000000) throw new Error('size');
+    const data = JSON.parse(await f.text());
+    if (!data || !Array.isArray(data.items)) throw new Error('shape');
+    applyRoom(data, { id: me.id, name: ctx.name, mine: true });
+    await uploadRoom();
+    toast('방 파일을 내 방으로 불러왔어요!');
+  } catch (e) { toast('방 파일을 읽지 못했어요. “방 백업 파일”로 만든 room.json 인지 확인해 주세요.'); }
+});
+function exportRoom() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(serialize())], { type: 'application/json' }));
+  a.download = 'room.json';
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  toast('room.json 파일로 저장했어요!');
+}
+function openLink() {
+  const url = location.origin + location.pathname + '?room=' + me.id;
+  openModal((s) => {
+    s.append(el('h2', { textContent: '🔗 내 방 링크' }));
+    s.append(el('div', { className: 'info', textContent: '이 링크를 친구에게 보내면 내 방을 구경할 수 있어요. 구경하는 사람은 방을 고칠 수 없고, 노트와 게시판에 글을 남길 수 있어요.' }));
+    const inp = el('input', { type: 'text', value: url, readOnly: true });
+    inp.setAttribute('aria-label', '내 방 링크');
+    inp.addEventListener('focus', () => inp.select());
+    s.append(inp);
+    const copy = el('button', { className: 'primary', textContent: '복사하기' });
+    copy.addEventListener('click', () => {
+      inp.select();
+      (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('링크를 복사했어요!')).catch(() => toast('링크를 길게 눌러(또는 Ctrl+C) 복사해 주세요.'));
+    });
+    s.append(el('div', { className: 'btns' }, [copy]));
+  });
+}
+async function openRooms() {
+  let listEl = null;
+  openModal((s) => {
+    s.append(el('h2', { textContent: '🔎 방 구경하기' }));
+    s.append(el('div', { className: 'info', textContent: '다른 사람들의 방을 구경하며 인테리어 아이디어를 얻어 보세요. 구경하는 방은 주인만 고칠 수 있고, 노트와 게시판에는 글을 남길 수 있어요.' }));
+    listEl = el('div', { className: 'rooms' }, [el('div', { className: 'note', textContent: '방을 불러오는 중…' })]);
+    s.append(listEl);
+    if (me) {
+      s.append(el('label', { htmlFor: 'rname', textContent: '내 방 이름' }));
+      const nm = el('input', { id: 'rname', type: 'text', maxLength: 20, value: ctx.mine ? ctx.name : myRoomName() ? myRoomName() + '의 방' : '', placeholder: '예) 민지의 방' });
+      s.append(nm);
+      const save = el('button', { textContent: '이름 저장' });
+      save.addEventListener('click', async () => {
+        const v = nm.value.trim().slice(0, 20);
+        const { error } = await sb.from('rooms').update({ name: v }).eq('owner', me.id);
+        if (error) { toast('이름을 저장하지 못했어요. 내 방을 먼저 만들어 주세요.'); return; }
+        if (ctx.mine) { ctx.name = v; refreshUI(); }
+        toast('방 이름을 바꿨어요!');
+      });
+      const out = el('button', { textContent: '로그아웃' });
+      out.addEventListener('click', async () => { await sb.auth.signOut(); location.href = location.pathname; });
+      s.append(el('div', { className: 'btns' }, [save, out]));
+    } else {
+      const li = el('button', { className: 'primary', textContent: '✨ 로그인해서 내 방 만들기' });
+      li.addEventListener('click', () => openLanding());
+      s.append(el('div', { className: 'btns' }, [li]));
+    }
+  });
+  try {
+    const [rs, fs] = await Promise.all([
+      sb.from('rooms').select('owner,name,updated_at').order('updated_at', { ascending: false }).limit(50),
+      sb.from('featured').select('owner').limit(1).maybeSingle(),
+    ]);
+    if (!listEl || !listEl.isConnected) return;
+    listEl.replaceChildren();
+    const fid = fs.data ? fs.data.owner : null;
+    const rows = (rs.data || []).slice().sort((a, b) => (b.owner === fid) - (a.owner === fid));
+    if (!rows.length) listEl.append(el('div', { className: 'note', textContent: '아직 만들어진 방이 없어요.' }));
+    rows.forEach((r) => {
+      const label = (r.owner === fid ? '⭐ 대표 방 · ' : '') + (r.name || '이름 없는 방') + (me && r.owner === me.id ? ' (내 방)' : '');
+      const b = el('button', { className: 'roomrow', textContent: label });
+      b.addEventListener('click', async () => {
+        closeModal();
+        if (!(await enterRoom(r.owner))) toast('방을 불러오지 못했어요.');
+      });
+      listEl.append(b);
+    });
+  } catch (e) {
+    if (listEl) listEl.replaceChildren(el('div', { className: 'note', textContent: '방 목록을 불러오지 못했어요.' }));
+  }
+}
+function refreshUI() {
+  const edit = !visit;
+  itemsBtn.style.display = edit ? '' : 'none';
+  colorBtn.style.display = edit ? '' : 'none';
+  roomsBtn.style.display = sb ? '' : 'none';
+  loginBtn.style.display = sb && !me ? '' : 'none';
+  myRoomBtn.style.display = sb && me && visit ? '' : 'none';
+  linkBtn.style.display = sb && me && edit && ctx.id ? '' : 'none';
+  exportBtn.style.display = edit ? '' : 'none';
+  importBtn.style.display = sb && me && edit ? '' : 'none';
+  const name = ctx.name || (visit ? '친구의 방' : '내 방');
+  const lines = visit
+    ? ['🎁 ' + name + ' 구경 중! 트리의 오너먼트, 책꽂이의 책을 눌러 보고, 책상 위 노트와 게시판에는 글을 남길 수 있어요.', '빈 곳을 끌면 방이 돌아가요. 왼쪽 아래 버튼으로 시점을 옮길 수 있어요.']
+    : ['🏠 ' + name, '가구를 눌러서 끌면 옮길 수 있어요. 🎄 트리, 📖 책꽂이, 🖼️ 액자, 🪧 게시판, 📓 책상 위 노트, 🧊 냉장고, 🪟 커튼은 눌러 보세요!', '빈 곳을 끌면 방이 돌아가고, 마우스 휠(두 손가락)로 확대·축소돼요.'];
+  if (!storageOk && !sb) lines.push('⚠️ 이 화면에서는 저장이 되지 않아요. 크롬 같은 브라우저에서 열어야 방이 유지돼요.');
+  document.getElementById('hint').textContent = lines.join('\n');
+}
+async function boot() {
+  document.getElementById('hint').textContent = '방을 불러오는 중…';
+  await initBackend();
+  try {
+    if (!sb) { bootOffline(); return; }
+    const q = new URLSearchParams(location.search).get('room');
+    let done = false;
+    if (q && /^[0-9a-f-]{36}$/i.test(q) && !(me && q === me.id)) done = await enterRoom(q);
+    if (!done && me) { await enterOwnRoom(); done = true; }
+    if (!done) { await enterFeatured(); if (!me) openLanding(); }
+  } catch (e) {
+    toast('서버에서 방을 불러오지 못했어요. 이 브라우저에 저장된 방을 열게요.');
+    sb = null;
+    bootOffline();
+  }
+}
+// ── 처음 화면(로그인), 이메일 가입, 첫 환영 ──
+function openLanding() {
+  if (!sb) return;
+  openModal((s) => {
+    s.append(el('h2', { textContent: '🎄 나만의 크리스마스 방' }));
+    s.append(el('div', { className: 'sub', textContent: '로그인하면 내 방을 만들고 꾸밀 수 있어요. 다른 사람들이 꾸민 방도 구경할 수 있어요.' }));
+    const g = el('button', { className: 'primary', textContent: '구글로 시작하기' });
+    g.style.width = '100%';
+    g.addEventListener('click', signIn);
+    s.append(g);
+    s.append(el('div', { className: 'or', textContent: '또는 이메일로' }));
+    const em = el('input', { type: 'email', placeholder: '이메일', autocomplete: 'email' });
+    em.setAttribute('aria-label', '이메일');
+    const pw = el('input', { type: 'password', placeholder: '비밀번호 (6자 이상)', autocomplete: 'current-password' });
+    pw.setAttribute('aria-label', '비밀번호');
+    const msg = el('div', { className: 'msg' });
+    const say = (t) => { msg.textContent = t; };
+    s.append(em, pw);
+    const inBtn = el('button', { className: 'primary', textContent: '로그인' });
+    const upBtn = el('button', { textContent: '처음이에요 (회원가입)' });
+    inBtn.addEventListener('click', () => emailAuth('in', em.value.trim(), pw.value, say, [inBtn, upBtn]));
+    upBtn.addEventListener('click', () => emailAuth('up', em.value.trim(), pw.value, say, [inBtn, upBtn]));
+    pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') inBtn.click(); });
+    s.append(el('div', { className: 'btns' }, [inBtn, upBtn]), msg);
+    const look = el('button', { textContent: '로그인 없이 구경만 할게요' });
+    look.addEventListener('click', closeModal);
+    s.append(el('div', { className: 'btns' }, [look]));
+  });
+}
+async function emailAuth(mode, email, pw, say, btns) {
+  if (!/^\S+@\S+\.\S+$/.test(email)) { say('이메일 주소를 확인해 주세요.'); return; }
+  if (pw.length < 6) { say('비밀번호는 6자 이상이어야 해요.'); return; }
+  btns.forEach((b) => { b.disabled = true; });
+  say('잠시만요…');
+  try {
+    const r = mode === 'up' ? await sb.auth.signUp({ email, password: pw }) : await sb.auth.signInWithPassword({ email, password: pw });
+    if (r.error) {
+      const m = String(r.error.message || '');
+      say(/invalid login/i.test(m) ? '이메일이나 비밀번호가 맞지 않아요.\n처음이라면 “처음이에요”를 눌러 주세요.'
+        : /already registered/i.test(m) ? '이미 가입된 이메일이에요. “로그인”을 눌러 주세요.'
+        : /not confirmed/i.test(m) ? '메일로 보낸 확인 링크를 먼저 눌러 주세요.'
+        : /rate limit|too many/i.test(m) ? '시도가 너무 많아요. 잠시 뒤에 다시 해 주세요.'
+        : '실패했어요. 잠시 뒤에 다시 해 주세요.');
+      return;
+    }
+    if (!r.data || !r.data.session) { say('확인 메일을 보냈어요. 메일의 링크를 누른 뒤 “로그인”을 눌러 주세요.'); return; }
+    me = r.data.user;
+    closeModal();
+    await enterOwnRoom();
+  } catch (e) {
+    say('연결에 실패했어요. 인터넷을 확인해 주세요.');
+  } finally {
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+function showWelcome() {
+  openModal((s) => {
+    s.append(el('h2', { textContent: '🎁 내 방이 만들어졌어요!' }));
+    s.append(el('div', { className: 'sub', textContent: '트리만 놓여 있는 빈 방이에요. 나만의 크리스마스 방으로 꾸며 보세요.' }));
+    s.append(el('div', { className: 'tips', textContent: '🛋️ “소품” 버튼으로 가구를 놓고, 눌러서 끌면 옮길 수 있어요\n🎄 트리를 눌러 오너먼트에 추억을 걸어 보세요\n🎨 “방 색”으로 벽과 바닥 색을 바꿔요\n🔗 “내 방 링크”를 친구에게 보내면 구경하러 와요\n💾 꾸민 건 자동으로 저장돼요' }));
+    s.append(el('label', { htmlFor: 'wname', textContent: '내 방 이름 (구경하는 사람들에게 보여요)' }));
+    const nm = el('input', { id: 'wname', type: 'text', maxLength: 20, value: ctx.name, placeholder: '예) 민지의 방' });
+    s.append(nm);
+    const go = el('button', { className: 'primary', textContent: '방 꾸미러 가기' });
+    go.addEventListener('click', async () => {
+      const v = nm.value.trim().slice(0, 20);
+      if (v && v !== ctx.name) {
+        ctx.name = v;
+        const { error } = await sb.from('rooms').update({ name: v }).eq('owner', me.id);
+        if (error) toast('방 이름을 저장하지 못했어요. 나중에 다시 바꿔 주세요.');
+        refreshUI();
+      }
+      closeModal();
+    });
+    s.append(el('div', { className: 'btns' }, [go]));
+  });
+}
+
+boot();
 </script>
 </body>
 </html>
