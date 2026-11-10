@@ -9,8 +9,8 @@
     font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   #hint { white-space: pre-line; position: fixed; top: 0; left: 0; right: 0; padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 0;
     color: #fff; opacity: .8; font-size: 14px; line-height: 1.5; pointer-events: none; }
-  #hint { padding-right: 150px; }
-  #roomsTop { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 6; }
+  #hint { padding-right: 240px; }
+  #topBar { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 6; display: flex; gap: 6px; }
   #saveState { position: fixed; top: calc(52px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 5; font-size: 12px; color: #fff; opacity: .75; pointer-events: none; }
   #roomsPanel { position: fixed; top: calc(54px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 7; display: none;
     width: min(280px, calc(100vw - 20px)); max-height: 60vh; overflow-y: auto; box-sizing: border-box; padding: 8px;
@@ -1303,7 +1303,7 @@ function toast(msg) {
   t.textContent = msg;
   t.style.opacity = 1;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { t.style.opacity = 0; }, 2600);
+  toast.timer = setTimeout(() => { t.style.opacity = 0; }, 2600 + Math.min(6000, msg.length * 70));
 }
 
 function select(item) {
@@ -2770,6 +2770,15 @@ const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeo
 const hexColor = (c) => (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c) ? c : POSTIT[0]);
 const myRoomName = () => String((me && me.user_metadata && me.user_metadata.nickname) || '').trim().slice(0, 20);   // 실명(구글 이름)은 쓰지 않고, 가입할 때 정한 닉네임만 써요
 
+function explain(e) {
+  const m = String((e && (e.message || e.error_description)) || e || '');
+  const c = e && e.code;
+  if (c === '42P01' || /does not exist|schema cache|relation/i.test(m)) return '서버에 표가 아직 없어요. Supabase SQL Editor에서 SQL을 실행해 주세요.';
+  if (c === '42501' || /row-level security|permission denied/i.test(m)) return '서버 권한 설정이 빠졌어요. SQL을 다시 실행해 주세요.';
+  if (/invalid api key|jwt|apikey|unauthorized|401/i.test(m)) return '서버 열쇠(키)가 맞지 않아요. index.html의 SUPABASE_KEY를 확인해 주세요.';
+  if (/timeout|failed to fetch|network|load failed/i.test(m)) return '서버에 연결이 안 돼요. 인터넷이나 Supabase 프로젝트가 멈춰 있는지 확인해 주세요.';
+  return '서버 오류: ' + m.slice(0, 80);
+}
 async function initBackend() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return;
   try {
@@ -2778,8 +2787,9 @@ async function initBackend() {
     const { data } = await withTimeout(sb.auth.getSession(), 9000);
     me = data && data.session ? data.session.user : null;
   } catch (e) {
+    console.error('Supabase 불러오기 실패', e);
     sb = null; me = null;
-    toast('서버에 연결하지 못했어요. 이 브라우저에만 저장돼요.');
+    toast(/timeout|fetch|import|module/i.test(String(e && e.message)) ? '서버 도구를 불러오지 못했어요. 인터넷을 확인하고 새로고침해 주세요.' : explain(e));
   }
 }
 function clearRoom() {
@@ -2845,7 +2855,8 @@ async function tryEnter(id) {
   try { return await enterRoom(id); } catch (e) { return false; }
 }
 async function enterFeatured() {
-  const { data: f } = await sb.from('featured').select('owner').limit(1).maybeSingle();
+  const { data: f, error: fe } = await sb.from('featured').select('owner').limit(1).maybeSingle();
+  if (fe) throw fe;
   if (f && await tryEnter(f.owner)) return;
   loading = true; clearRoom(); setupDefaults(); ensureBoard();
   ctx.id = null; ctx.name = ''; ctx.mine = false; visit = true;
@@ -2911,8 +2922,13 @@ async function signIn() {
 }
 
 // ── 화면 버튼들 ──
-const roomsBtn = mkBtn('🔎 다른 방 구경하기', () => toggleRooms(), document.body);
-roomsBtn.id = 'roomsTop';
+const topBar = el('div', { id: 'topBar' });
+document.body.append(topBar);
+const roomsBtn = mkBtn('🔎 다른 방 구경하기', () => toggleRooms(), topBar);
+const logoutBtn = mkBtn('🚪 로그아웃', async () => {
+  try { await sb.auth.signOut(); } catch (e) { /* 무시 */ }
+  location.href = location.pathname;
+}, topBar);
 const saveState = el('div', { id: 'saveState' });
 document.body.append(saveState);
 const roomsPanel = document.createElement('div');
@@ -3044,6 +3060,7 @@ function refreshUI() {
   itemsBtn.style.display = edit ? '' : 'none';
   colorBtn.style.display = edit ? '' : 'none';
   roomsBtn.style.display = sb ? '' : 'none';
+  logoutBtn.style.display = sb && me ? '' : 'none';
   saveState.style.display = sb && me && edit ? '' : 'none';
   if (sb && me && edit && !saveState.textContent) saveState.textContent = '☁️ 자동 저장 중';
   loginBtn.style.display = sb && !me ? '' : 'none';
@@ -3069,7 +3086,8 @@ async function boot() {
     if (!done && me) { await enterOwnRoom(); done = true; }
     if (!done) { await enterFeatured(); if (!me) openLanding(); }
   } catch (e) {
-    toast('서버에서 방을 불러오지 못했어요. 이 브라우저에 저장된 방을 열게요.');
+    console.error('방 불러오기 실패', e);
+    toast(explain(e));
     sb = null;
     bootOffline();
   }
