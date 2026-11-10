@@ -2935,6 +2935,7 @@ async function signIn() {
 const topBar = el('div', { id: 'topBar' });
 document.body.append(topBar);
 const roomsBtn = mkBtn('🔎 다른 방 구경하기', () => toggleRooms(), topBar);
+const guideBtn = mkBtn('📖 사용법', () => showGuide(), topBar);
 const infoBtn = mkBtn('⚙️ 내 정보', () => openMyInfo(), topBar);
 const logoutBtn = mkBtn('🚪 로그아웃', async () => {
   try { await sb.auth.signOut(); } catch (e) { /* 무시 */ }
@@ -3112,11 +3113,22 @@ function refreshUI() {
   exportBtn.style.display = edit ? '' : 'none';
   importBtn.style.display = sb && me && edit ? '' : 'none';
   const name = ctx.name || (visit ? '친구의 방' : '내 방');
-  const lines = visit
-    ? ['구경 중이에요! 트리의 오너먼트, 책꽂이의 책을 눌러 보고,', '책상 위 노트와 게시판에는 글을 남길 수 있어요.', '빈 곳을 끌면 방이 돌아가요. 왼쪽 아래 버튼으로 시점을 옮길 수 있어요.']
-    : ['가구를 눌러서 끌면 옮길 수 있어요.', '🎄 트리, 📖 책꽂이, 🖼️ 액자, 🪧 게시판, 📓 책상 위 노트, 🧊 냉장고, 🪟 커튼은 눌러 보세요!', '빈 곳을 끌면 방이 돌아가고, 마우스 휠(두 손가락)로 확대·축소돼요.'];
-  if (!storageOk && !sb) lines.push('⚠️ 이 화면에서는 저장이 되지 않아요. 크롬 같은 브라우저에서 열어야 방이 유지돼요.');
-  document.getElementById('hint').replaceChildren(el('div', { className: 'title', textContent: (visit ? '🎁 ' : '🏠 ') + name }), el('div', { className: 'body', textContent: lines.join('\n') }));
+  const kids = [el('div', { className: 'title', textContent: (visit ? '🎁 ' : '🏠 ') + name })];
+  if (!storageOk && !sb) kids.push(el('div', { className: 'body', textContent: '⚠️ 이 화면에서는 저장이 되지 않아요. 크롬 같은 브라우저에서 열어야 방이 유지돼요.' }));
+  document.getElementById('hint').replaceChildren(...kids);
+}
+function showGuide() {
+  const name = ctx.name || (visit ? '친구의 방' : '내 방');
+  const tips = visit
+    ? '🎄 트리의 오너먼트와 책꽂이의 책을 눌러 보세요\n📓 책상 위 노트와 🪧 게시판에는 글을 남길 수 있어요\n🪑 의자에 앉거나 💡 방 불을 켜고 끌 수 있어요\n🖱️ 빈 곳을 끌면 방이 돌아가요\n🔎 오른쪽 위에서 다른 사람의 방도 구경해요'
+    : '🛋️ “소품” 버튼으로 가구를 놓고, 눌러서 끌어 옮겨요\n🎄 트리를 눌러 오너먼트에 추억을 걸어 보세요\n📖 책꽂이, 🖼️ 액자, 📓 책상 위 노트, 🧊 냉장고, 🪟 커튼도 눌러 보세요\n🎨 “방 색”으로 벽과 바닥 색을 바꿔요\n🖱️ 빈 곳을 끌면 방이 돌아가고, 휠(두 손가락)로 확대·축소돼요\n💾 꾸민 건 자동으로 저장돼요';
+  openModal((s) => {
+    s.append(el('h2', { textContent: visit ? '🎁 ' + name + ' 구경하기' : '🎄 ' + name + '에 온 걸 환영해요!' }));
+    s.append(el('div', { className: 'tips', textContent: tips }));
+    const go = el('button', { className: 'primary', textContent: '시작하기' });
+    go.addEventListener('click', closeModal);
+    s.append(el('div', { className: 'btns' }, [go]));
+  });
 }
 async function boot() {
   document.getElementById('hint').textContent = '방을 불러오는 중…';
@@ -3188,6 +3200,7 @@ async function emailAuth(mode, name, pw, say, btns, nickname) {
     me = r.data.user;
     closeModal();
     await enterOwnRoom();
+    if (!modalOpen) showGuide();
   } catch (e) {
     say('연결에 실패했어요. 인터넷을 확인해 주세요.');
   } finally {
