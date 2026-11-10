@@ -9,7 +9,17 @@
     font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
   #hint { white-space: pre-line; position: fixed; top: 0; left: 0; right: 0; padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 0;
     color: #fff; opacity: .8; font-size: 14px; line-height: 1.5; pointer-events: none; }
-  #hint { padding-right: 240px; }
+  #hint { padding-right: 330px; }
+  #hint .title { font-size: 30px; font-weight: 800; line-height: 1.25; opacity: 1; margin-bottom: 6px; text-shadow: 0 2px 10px rgba(0,0,0,.45); word-break: break-word; }
+  #hint .body { font-size: 14px; white-space: pre-line; }
+  #topBar { flex-wrap: wrap; justify-content: flex-end; max-width: 330px; }
+  @media (max-width: 700px) {
+    #hint { padding-right: 150px; }
+    #hint .title { font-size: 24px; }
+    #topBar { flex-direction: column; align-items: flex-end; }
+    #roomsPanel { top: calc(150px + env(safe-area-inset-top, 0px)); }
+    #saveState { top: calc(150px + env(safe-area-inset-top, 0px)); }
+  }
   #topBar { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 6; display: flex; gap: 6px; }
   #saveState { position: fixed; top: calc(52px + env(safe-area-inset-top, 0px)); right: 14px; z-index: 5; font-size: 12px; color: #fff; opacity: .75; pointer-events: none; }
   #roomsPanel { position: fixed; top: calc(54px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 7; display: none;
@@ -2925,6 +2935,7 @@ async function signIn() {
 const topBar = el('div', { id: 'topBar' });
 document.body.append(topBar);
 const roomsBtn = mkBtn('🔎 다른 방 구경하기', () => toggleRooms(), topBar);
+const infoBtn = mkBtn('⚙️ 내 정보', () => openMyInfo(), topBar);
 const logoutBtn = mkBtn('🚪 로그아웃', async () => {
   try { await sb.auth.signOut(); } catch (e) { /* 무시 */ }
   location.href = location.pathname;
@@ -3047,6 +3058,37 @@ function openMyInfo() {
     const out = el('button', { textContent: '로그아웃' });
     out.addEventListener('click', async () => { await sb.auth.signOut(); location.href = location.pathname; });
     s.append(el('div', { className: 'btns' }, [save, out]));
+    s.append(el('div', { className: 'sub', textContent: '내 방만 지우고 처음처럼 다시 시작할 수 있어요. 계정은 그대로예요. 방, 사진, 방에 달린 게시판 글과 노트가 사라지고 되돌릴 수 없어요.' }));
+    const wipe = el('button', { className: 'danger', textContent: '🧹 내 방 삭제하기' });
+    armButton(wipe, '정말 지울까요? 한 번 더 누르면 삭제돼요', async () => {
+      loading = true;                       // 지우는 동안 자동 저장이 끼어들지 않게 막아요
+      clearTimeout(saveTimer); clearTimeout(uploadTimer);
+      const { data, error } = await sb.from('rooms').delete().eq('owner', me.id).select('owner');
+      if (error || !data || !data.length) {
+        loading = false;
+        console.error('내 방 삭제 실패', error);
+        toast(error ? '방을 지우지 못했어요. 잠시 뒤에 다시 해 주세요.' : '삭제 권한이 아직 없어요. Supabase에서 SQL(방 삭제용)을 실행해 주세요.');
+        return;
+      }
+      try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* 무시 */ }
+      location.href = location.pathname;    // 다시 열면 새 방이 만들어져요
+    });
+    s.append(el('div', { className: 'btns' }, [wipe]));
+    s.append(el('div', { className: 'sub', textContent: '계정을 지우면 내 방, 사진, 방에 달린 게시판 글과 노트가 모두 사라지고 되돌릴 수 없어요.' }));
+    const del = el('button', { className: 'danger', textContent: '🗑️ 계정 삭제' });
+    armButton(del, '정말 지울까요? 한 번 더 누르면 삭제돼요', async () => {
+      const { error } = await sb.rpc('delete_my_account');
+      if (error) {
+        console.error('계정 삭제 실패', error);
+        toast(error.code === 'PGRST202' || /function|schema cache/i.test(String(error.message))
+          ? '서버에 삭제 기능이 아직 없어요. Supabase에서 SQL(계정 삭제용)을 실행해 주세요.'
+          : '계정을 지우지 못했어요. 잠시 뒤에 다시 해 주세요.');
+        return;
+      }
+      try { await sb.auth.signOut(); } catch (e) { /* 무시 */ }
+      location.href = location.pathname;
+    });
+    s.append(el('div', { className: 'btns' }, [del]));
     if (!visit && location.hash === '#import') {
       s.append(el('div', { className: 'sub', textContent: '예전에 꾸며 둔 방 파일(room.json)이 있다면 여기서 내 방으로 옮길 수 있어요.' }));
       const imp = el('button', { textContent: '📥 예전 방 파일 불러오기' });
@@ -3061,6 +3103,7 @@ function refreshUI() {
   colorBtn.style.display = edit ? '' : 'none';
   roomsBtn.style.display = sb ? '' : 'none';
   logoutBtn.style.display = sb && me ? '' : 'none';
+  infoBtn.style.display = sb && me ? '' : 'none';
   saveState.style.display = sb && me && edit ? '' : 'none';
   if (sb && me && edit && !saveState.textContent) saveState.textContent = '☁️ 자동 저장 중';
   loginBtn.style.display = sb && !me ? '' : 'none';
@@ -3070,10 +3113,10 @@ function refreshUI() {
   importBtn.style.display = sb && me && edit ? '' : 'none';
   const name = ctx.name || (visit ? '친구의 방' : '내 방');
   const lines = visit
-    ? ['🎁 ' + name + ' 구경 중! 트리의 오너먼트, 책꽂이의 책을 눌러 보고, 책상 위 노트와 게시판에는 글을 남길 수 있어요.', '빈 곳을 끌면 방이 돌아가요. 왼쪽 아래 버튼으로 시점을 옮길 수 있어요.']
-    : ['🏠 ' + name, '가구를 눌러서 끌면 옮길 수 있어요. 🎄 트리, 📖 책꽂이, 🖼️ 액자, 🪧 게시판, 📓 책상 위 노트, 🧊 냉장고, 🪟 커튼은 눌러 보세요!', '빈 곳을 끌면 방이 돌아가고, 마우스 휠(두 손가락)로 확대·축소돼요.'];
+    ? ['구경 중이에요! 트리의 오너먼트, 책꽂이의 책을 눌러 보고,', '책상 위 노트와 게시판에는 글을 남길 수 있어요.', '빈 곳을 끌면 방이 돌아가요. 왼쪽 아래 버튼으로 시점을 옮길 수 있어요.']
+    : ['가구를 눌러서 끌면 옮길 수 있어요.', '🎄 트리, 📖 책꽂이, 🖼️ 액자, 🪧 게시판, 📓 책상 위 노트, 🧊 냉장고, 🪟 커튼은 눌러 보세요!', '빈 곳을 끌면 방이 돌아가고, 마우스 휠(두 손가락)로 확대·축소돼요.'];
   if (!storageOk && !sb) lines.push('⚠️ 이 화면에서는 저장이 되지 않아요. 크롬 같은 브라우저에서 열어야 방이 유지돼요.');
-  document.getElementById('hint').textContent = lines.join('\n');
+  document.getElementById('hint').replaceChildren(el('div', { className: 'title', textContent: (visit ? '🎁 ' : '🏠 ') + name }), el('div', { className: 'body', textContent: lines.join('\n') }));
 }
 async function boot() {
   document.getElementById('hint').textContent = '방을 불러오는 중…';
