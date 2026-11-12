@@ -1816,12 +1816,12 @@ function openOrnament(orn, isNew) {
 function openBookForm(shelf) {
   openModal((s) => {
     s.append(el('h2', { textContent: '📖 책 등록' }));
-    s.append(el('div', { className: 'info', textContent: '📖 올해 읽은 책의 이름과 출판사를 적고 “책 꽂기”를 누르면 책꽂이에 책이 한 권 꽂혀요. 이어서 다른 책도 계속 등록할 수 있어요. 꽂은 책은 끌어서 원하는 칸으로 옮기고, 눌러서 제목과 출판사를 볼 수 있어요.' }));
+    s.append(el('div', { className: 'info', textContent: '📖 올해 읽은 책의 이름과 작가를 적고 “책 꽂기”를 누르면 책꽂이에 책이 한 권 꽂혀요. 이어서 다른 책도 계속 등록할 수 있어요. 꽂은 책은 끌어서 원하는 칸으로 옮기고, 눌러서 제목과 작가를 볼 수 있어요.' }));
     s.append(el('label', { htmlFor: 'btitle', textContent: '책 이름' }));
     const t = el('input', { id: 'btitle', type: 'text', maxLength: 60, placeholder: '예) 어린 왕자' });
     s.append(t);
-    s.append(el('label', { htmlFor: 'bpub', textContent: '출판사' }));
-    const pu = el('input', { id: 'bpub', type: 'text', maxLength: 40, placeholder: '예) 열린책들' });
+    s.append(el('label', { htmlFor: 'bpub', textContent: '작가' }));
+    const pu = el('input', { id: 'bpub', type: 'text', maxLength: 40, placeholder: '예) 생텍쥐페리' });
     s.append(pu);
     const msg = el('div', { className: 'err' });
     msg.setAttribute('aria-live', 'polite');
@@ -1847,7 +1847,7 @@ function openBookForm(shelf) {
   });
 }
 function openBookCard(book) {
-  showIntro('📖 ' + book.userData.title, book.userData.pub ? '출판사: ' + book.userData.pub : '출판사 정보가 없어요.', [
+  showIntro('📖 ' + book.userData.title, book.userData.pub ? '작가: ' + book.userData.pub : '작가 정보가 없어요.', [
     { label: '닫기', primary: true, fn: hideIntro },
     ...(visit ? [] : [{ label: '🗑️ 책 없애기', fn: () => { removeBook(book); save(); hideIntro(); toast('책을 없앴어요.'); } }]),
   ]);
@@ -2502,7 +2502,7 @@ addEventListener('pointerup', (e) => {
     else if (visit && (d.frame || d.tree || d.shelf)) toast(visit && d.tree ? '🎄 트리에 달린 오너먼트를 눌러 보세요!' : d.shelf ? '📖 책꽂이의 책을 눌러 보세요!' : '🖼️ 액자예요.');
     else if (d.frame) introFor(d.frame, '🖼️ 액자', '좋아하는 사진을 액자에 걸어 볼 수 있어요. “사진 넣기”를 누르면 사진을 고르는 창이 열려요.', 3.0, true, '사진 넣기', () => openFrame(d.frame), true);
     else if (d.tree) introFor(d.tree, '🎄 기억 트리', '오너먼트를 달고 올해의 기억을 하나씩 기록해 보세요. “오너먼트 달기”를 누르면 모양과 색을 고를 수 있고, 이미 단 오너먼트는 누르면 일기장처럼 볼 수 있어요.', 7.2, false, '오너먼트 달기', () => showPanel(ornPanel), false);
-    else if (d.shelf) introFor(d.shelf, '📖 책꽂이', '올해 읽은 책을 등록하면 책꽂이에 한 권씩 꽂혀요. “책 등록하기”를 누르면 책 이름과 출판사를 적는 창이 열려요. 꽂은 책은 끌어서 옮기고, 눌러서 제목을 볼 수 있어요.', 3.4, false, '책 등록하기', () => openBookForm(d.shelf), true);
+    else if (d.shelf) introFor(d.shelf, '📖 책꽂이', '올해 읽은 책을 등록하면 책꽂이에 한 권씩 꽂혀요. “책 등록하기”를 누르면 책 이름과 작가를 적는 창이 열려요. 꽂은 책은 끌어서 옮기고, 눌러서 제목을 볼 수 있어요.', 3.4, false, '책 등록하기', () => openBookForm(d.shelf), true);
     else if (d.chair) introMulti(d.chair, '🪑 의자', '의자에 앉으면 앉은 눈높이로 방을 볼 수 있어요. “의자에 앉기”를 누르면 시점이 바뀌고, 아래 “일어나기” 버튼으로 돌아와요. 의자를 돌려 놓으면 보는 방향도 달라져요.', 3.0, false, [
       { label: '의자에 앉기', primary: true, fn: () => sitOn(d.chair) },
     ]);
